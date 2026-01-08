@@ -98,50 +98,76 @@ class ArizonaAPI:
 
     def get_thread(self, thread_id: int) -> Thread:
         """Найти тему по ID"""
-        request = self.session.get(f"{MAIN_URL}/threads/{thread_id}/page-1?_xfResponseType=json&_xfToken={self.token}").json()
-        if request['status'] == 'error':
+        request = self.session.get(
+            f"{MAIN_URL}/threads/{thread_id}/page-1?_xfResponseType=json&_xfToken={self.token}"
+        ).json()
+
+        if request.get("status") == "error":
             return None
-        
-        if request.get('redirect') is not None:
-            return self.get_thread(request['redirect'].split(MAIN_URL, maxsplit=1)[-1].split('/')[1])
 
-        content = BeautifulSoup(unescape(request['html']['content']), 'lxml')
-        content_h1 = BeautifulSoup(unescape(request['html']['h1']), 'lxml')
+        if request.get("redirect") is not None:
+            return self.get_thread(int(request["redirect"].split(MAIN_URL, maxsplit=1)[-1].split("/")[1]))
 
-        creator_id = content.find('a', {'class': 'username'})
-        try: creator = self.get_member(int(creator_id['data-user-id']))
-        except: creator = Member(self, int(creator_id['data-user-id']), content.find('a', {'class': 'username'}).text, None, None, None, None, None, None)
-        
-        create_date_tag = content.find('time')
-        create_date = 0
-        if create_date_tag and create_date_tag.has_attr('data-time'):
-            data_time_value = create_date_tag['data-time']
-            if data_time_value.isdigit():
-                create_date = int(data_time_value)
-            
-            else:
-                create_date = 0
-        
+        content = BeautifulSoup(unescape(request["html"]["content"]), "lxml")
+        content_h1 = BeautifulSoup(unescape(request["html"]["h1"]), "lxml")
+
+        creator_id = content.find("a", {"class": "username"})
         try:
-            prefix = content_h1.find('span', {'class': 'label'}).text
+            creator = self.get_member(int(creator_id["data-user-id"]))
+        except Exception:
+            creator = Member(
+                self,
+                int(creator_id["data-user-id"]),
+                creator_id.text if creator_id else "",
+                None, None, None, None, None, None
+            )
+
+        create_date = None
+        for t in content.find_all("time"):
+            dt = (t.get("data-time") or "").strip()
+            if dt.isdigit():
+                create_date = int(dt)
+                break
+
+        if create_date is None:
+            create_date = 0 
+
+        try:
+            prefix_tag = content_h1.find("span", {"class": "label"})
+            prefix = prefix_tag.text if prefix_tag else ""
             title = content_h1.text.strip().replace(prefix, "").strip()
-
-        except AttributeError:
+        except Exception:
             prefix = ""
-            title = content_h1.text
-        
-        thread_content_html = content.find('div', {'class': 'bbWrapper'})
-        thread_content = thread_content_html.text
-        
-        try: pages_count = int(content.find_all('li', {'class': 'pageNav-page'})[-1].text)
-        except IndexError: pages_count = 1
+            title = content_h1.text.strip() if content_h1 else ""
 
-        is_closed = False
-        if content.find('dl', {'class': 'blockStatus'}): is_closed = True
-        thread_post_id = content.find('article', {'id': compile('js-post-*')})['id'].split('js-post-', maxsplit=1)[-1]
+        thread_content_html = content.find("div", {"class": "bbWrapper"})
+        thread_content = thread_content_html.text.strip() if thread_content_html else ""
 
-        return Thread(self, thread_id, creator, create_date, title, prefix, thread_content, thread_content_html, pages_count, thread_post_id, is_closed)
+        try:
+            pages_count = int(content.find_all("li", {"class": "pageNav-page"})[-1].text)
+        except Exception:
+            pages_count = 1
 
+        is_closed = bool(content.find("dl", {"class": "blockStatus"}))
+
+        post_article = content.find("article", {"id": compile(r"js-post-*")})
+        thread_post_id = None
+        if post_article and post_article.get("id"):
+            thread_post_id = post_article["id"].split("js-post-", maxsplit=1)[-1]
+
+        return Thread(
+            self,
+            thread_id,
+            creator,
+            create_date,
+            title,
+            prefix,
+            thread_content,
+            thread_content_html,
+            pages_count,
+            thread_post_id,
+            is_closed
+        )
 
     def get_post(self, post_id: int) -> Post:
         """Найти пост по ID (Post если существует, None - удален / нет доступа)"""
